@@ -23,5 +23,18 @@ model_config = pydantic.ConfigDict(
 class BaseModel(pydantic.BaseModel):
     model_config = model_config
 
+    @pydantic.model_validator(mode="after")
+    def set_naive_datetime_to_utc(self) -> "BaseModel":
+        """
+        遍历模型中的所有字段，如果字段是天真的 datetime 对象，
+        则将其时区设置为 UTC。
+        """
+        for field_name, value in self.__dict__.items():
+            if isinstance(value, datetime.datetime):
+                if value.tzinfo is None:
+                    aware_value = value.replace(tzinfo=datetime.timezone.utc)
+                    setattr(self, field_name, aware_value)
+        return self
+
 
 __all__ = ["BaseModel", "T"]

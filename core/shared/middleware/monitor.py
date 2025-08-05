@@ -14,11 +14,11 @@ from starlette.middleware.base import (
 from starlette.types import Message
 
 
-logger = logging.getLogger("monitor-middleware")
+logger = logging.getLogger("middleware-monitor")
 
 
 class GlobalMonitorMiddleware(BaseHTTPMiddleware):
-    FILTER_API_PATH = ["/docs", "/openapi.json", "/heart", "/"]
+    FILTER_API_PATH = ["/", "/docs", "/openapi.json", "/heart"]
     CONTENT_TYPE_PREFIXES = ["application/json", "text/"]
     MAX_BODY_LOG_LENGTH = 500
 

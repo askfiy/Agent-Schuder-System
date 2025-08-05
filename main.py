@@ -9,8 +9,9 @@ from fastapi import Request, Response, Depends
 
 from core.router import api_router
 from core.logger import setup_logging
-from core.handle import exception_handler
+from core.handle import exception_handler, service_exception_handler
 from core.shared.globals import g
+from core.shared.exceptions import ServiceException
 from core.shared.dependencies import global_headers
 from core.shared.middleware import GlobalContextMiddleware, GlobalMonitorMiddleware
 
@@ -34,6 +35,7 @@ app = fastapi.FastAPI(
 app.add_middleware(GlobalContextMiddleware)
 app.add_middleware(GlobalMonitorMiddleware)
 app.add_exception_handler(Exception, exception_handler)
+app.add_exception_handler(ServiceException, service_exception_handler)
 
 
 @app.middleware("http")

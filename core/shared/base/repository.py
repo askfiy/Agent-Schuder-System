@@ -7,8 +7,8 @@ from sqlalchemy.orm import joinedload
 from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .model import BaseModel
 from .scheme import BaseTableScheme
+from .types import ModelDumpProtocol
 from core.shared.models.http import Paginator
 
 ModelType = TypeVar("ModelType", bound=BaseTableScheme)
@@ -67,8 +67,9 @@ class BaseCRUDRepository(Generic[ModelType]):
         result = await self.session.execute(stmt)
         return result.scalars().unique().all()
 
-    async def create(self, create_model: BaseModel) -> ModelType:
+    async def create(self, create_model: Any) -> ModelType:
         """创建一个新对象"""
+        assert isinstance(create_model, ModelDumpProtocol)
         db_obj = self.model(**create_model.model_dump())
         self.session.add(db_obj)
         await self.session.flush()
@@ -76,14 +77,15 @@ class BaseCRUDRepository(Generic[ModelType]):
         return db_obj
 
     async def delete(self, db_obj: ModelType) -> ModelType:
-        """根据主键 ID 软删除一个对象"""
+        """软删除一个现有对象"""
         db_obj.is_deleted = True
 
         self.session.add(db_obj)
         return db_obj
 
-    async def update(self, db_obj: ModelType, update_model: BaseModel) -> ModelType:
+    async def update(self, db_obj: ModelType, update_model: Any) -> ModelType:
         """更新一个已有的对象"""
+        assert isinstance(update_model, ModelDumpProtocol)
         update_info = update_model.model_dump(exclude_unset=True)
         for key, value in update_info.items():
             setattr(db_obj, key, value)

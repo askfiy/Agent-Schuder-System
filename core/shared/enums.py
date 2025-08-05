@@ -20,6 +20,17 @@ class TaskState(StrEnum):
     CANCELLED = "cancelled"
 
 
+class TaskUnitState(StrEnum):
+    # 执行单元创建
+    CREATED = "CREATED"
+    # 执行单元运行
+    RUNNING = "RUNNING"
+    # 执行单元完成
+    COMPLETE = "COMPLETE"
+    # 执行单元取消
+    CANCELLED = "CANCELLED"
+
+
 class MessageRole(StrEnum):
     USER = "user"
     SYSTEM = "system"

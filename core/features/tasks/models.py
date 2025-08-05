@@ -1,0 +1,66 @@
+import datetime
+
+from pydantic import field_serializer
+
+from core.shared.enums import TaskState
+from core.shared.base.model import BaseModel
+
+from ..tasks_chat.models import TaskChatInCrudModel
+from ..tasks_history.models import TaskHistoryInCrudModel
+
+
+class TaskInCRUDResponse(BaseModel):
+    id: int
+    name: str
+    state: TaskState
+    priority: int
+    workspace_id: int
+
+    expect_execute_time: datetime.datetime
+    owner: str
+    keywords: str
+    original_user_input: str
+
+    chats: list[TaskChatInCrudModel]
+    histories: list[TaskHistoryInCrudModel]
+
+    invocation_id: str | None
+    lasted_execute_time: datetime.datetime | None
+
+    @field_serializer("keywords")
+    def _validator_keywords(self, keywords: str) -> list[str]:
+        return keywords.split(",")
+
+
+class TaskCreateRequestModel(BaseModel):
+    name: str
+    priority: int
+    workspace_id: int
+    expect_execute_time: datetime.datetime
+    owner: str
+    owner_timezone: str
+    keywords: list[str]
+    original_user_input: str
+
+    @field_serializer("keywords")
+    def _validator_keywords(self, keywords: list[str]) -> str:
+        return ",".join(keywords)
+
+
+class TaskUpdateRequestModel(BaseModel):
+    name: str | None = None
+    state: TaskState | None = None
+    priority: int | None = None
+    invocation_id: str | None = None
+
+    expect_execute_time: datetime.datetime | None = None
+    lasted_execute_time: datetime.datetime | None = None
+
+    keywords: list[str] | None = None
+    original_user_input: str | None = None
+
+    @field_serializer("keywords")
+    def _validator_keywords(self, keywords: list[str] | None) -> str | None:
+        if keywords:
+            return ",".join(keywords)
+        return None
