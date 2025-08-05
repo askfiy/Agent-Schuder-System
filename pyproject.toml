@@ -1,0 +1,18 @@
+[project]
+name = "agent-scheduler-system"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "alembic>=1.16.4",
+    "asyncmy>=0.2.10",
+    "colorlog>=6.9.0",
+    "fastapi>=0.116.1",
+    "greenlet>=3.2.3",
+    "pydantic-settings>=2.10.1",
+    "pymysql>=1.1.1",
+    "redis[hiredis]>=6.2.0",
+    "sqlalchemy>=2.0.42",
+    "uvicorn>=0.35.0",
+]
