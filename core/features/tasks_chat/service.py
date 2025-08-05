@@ -6,10 +6,10 @@ from core.shared.database.session import (
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import TasksChat
 from .models import TaskChatCreateModel
-from .repository import TasksChatCrudRespository
+from .repository import TasksChatCrudRepository
 
 
-async def get_or_404(repo: TasksChatCrudRespository, pk: int):
+async def get_or_404(repo: TasksChatCrudRepository, pk: int):
     db_obj = await repo.get(pk=pk)
     if not db_obj:
         raise ServiceNotFoundException(f"任务对话记录: {pk} 不存在")
@@ -21,7 +21,7 @@ async def get_or_404(repo: TasksChatCrudRespository, pk: int):
 async def create(
     create_model: TaskChatCreateModel, session: AsyncTxSession
 ) -> TasksChat:
-    repo = TasksChatCrudRespository(session=session)
+    repo = TasksChatCrudRepository(session=session)
     db_obj = await repo.create(create_model)
     return db_obj
 
@@ -30,5 +30,5 @@ async def create(
 async def upget_paginator(
     task_id: int, paginator: Paginator, session: AsyncSession
 ) -> Paginator:
-    repo = TasksChatCrudRespository(session=session)
+    repo = TasksChatCrudRepository(session=session)
     return await repo.upget_paginator(task_id=task_id, paginator=paginator)

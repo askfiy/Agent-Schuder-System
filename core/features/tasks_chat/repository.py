@@ -5,7 +5,7 @@ from core.shared.base.repository import BaseCRUDRepository
 from .scheme import TasksChat
 
 
-class TasksChatCrudRespository(BaseCRUDRepository[TasksChat]):
+class TasksChatCrudRepository(BaseCRUDRepository[TasksChat]):
     async def upget_paginator(
         self,
         task_id: int,
@@ -19,4 +19,3 @@ class TasksChatCrudRespository(BaseCRUDRepository[TasksChat]):
             paginator=paginator,
             stmt=query_stmt,
         )
-

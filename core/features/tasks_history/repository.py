@@ -5,7 +5,7 @@ from core.shared.base.repository import BaseCRUDRepository
 from .scheme import TasksHistory
 
 
-class TasksHistoryCrudRespository(BaseCRUDRepository[TasksHistory]):
+class TasksHistoryCrudRepository(BaseCRUDRepository[TasksHistory]):
     async def upget_paginator(
         self,
         task_id: int,

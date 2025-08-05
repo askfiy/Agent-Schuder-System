@@ -19,7 +19,7 @@ from ..tasks_history.scheme import TasksHistory
 from ..tasks_workspace.service import delete as workspace_delete
 
 
-class TasksCrudRespository(BaseCRUDRepository[Tasks]):
+class TasksCrudRepository(BaseCRUDRepository[Tasks]):
     def __init__(self, session: AsyncSession):
         super().__init__(session=session)
 

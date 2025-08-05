@@ -6,10 +6,10 @@ from core.shared.database.session import (
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import TasksHistory
 from .models import TaskHistoryCreateModel
-from .repository import TasksHistoryCrudRespository
+from .repository import TasksHistoryCrudRepository
 
 
-async def get_or_404(repo: TasksHistoryCrudRespository, pk: int):
+async def get_or_404(repo: TasksHistoryCrudRepository, pk: int):
     db_obj = await repo.get(pk=pk)
     if not db_obj:
         raise ServiceNotFoundException(f"任务执行记录: {pk} 不存在")
@@ -20,7 +20,7 @@ async def get_or_404(repo: TasksHistoryCrudRespository, pk: int):
 async def create(
     create_model: TaskHistoryCreateModel, session: AsyncTxSession
 ) -> TasksHistory:
-    repo = TasksHistoryCrudRespository(session=session)
+    repo = TasksHistoryCrudRepository(session=session)
     db_obj = await repo.create(create_model)
     return db_obj
 
@@ -28,5 +28,5 @@ async def create(
 async def upget_paginator(
     task_id: int, paginator: Paginator, session: AsyncSession
 ) -> Paginator:
-    repo = TasksHistoryCrudRespository(session=session)
+    repo = TasksHistoryCrudRepository(session=session)
     return await repo.upget_paginator(task_id=task_id, paginator=paginator)
