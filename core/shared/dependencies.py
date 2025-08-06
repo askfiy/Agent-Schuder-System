@@ -8,6 +8,7 @@ from core.shared.database.session import (
 )
 
 
+
 async def global_headers(
     x_trace_id: str | None = Header(
         default=None,

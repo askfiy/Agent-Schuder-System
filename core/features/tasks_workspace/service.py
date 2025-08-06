@@ -33,7 +33,6 @@ async def update(
     workspace_id: int, update_model: TaskWorkspaceUpdateModel, session: AsyncTxSession
 ) -> TasksWorkspace:
     repo = TasksWorkspaceCrudRepository(session=session)
-    db_obj = await repo.get(pk=workspace_id)
     db_obj = await get_or_404(repo=repo, pk=workspace_id)
     db_obj = await repo.update(db_obj, update_model=update_model)
     return db_obj
@@ -41,7 +40,6 @@ async def update(
 
 async def delete(workspace_id: int, session: AsyncTxSession) -> bool:
     repo = TasksWorkspaceCrudRepository(session=session)
-    db_obj = await repo.get(pk=workspace_id)
     db_obj = await get_or_404(repo=repo, pk=workspace_id)
     db_obj = await repo.delete(db_obj=db_obj)
     return bool(db_obj.is_deleted)

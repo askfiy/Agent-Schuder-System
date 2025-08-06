@@ -16,8 +16,8 @@ from core.shared.models.http import (
 
 from . import service
 from .models import (
-    TaskAuditInCRUDResponse,
-    TaskAuditCreateRequestModel,
+    TaskAuditInCrudModel,
+    TaskAuditCreateModel,
 )
 
 
@@ -35,7 +35,7 @@ async def get_all(
     request: PaginationRequest = Depends(PaginationRequest),
     session: AsyncSession = Depends(get_async_session),
 ) -> PaginationResponse:
-    paginator = Paginator(request=request, serializer_cls=TaskAuditInCRUDResponse)
+    paginator = Paginator(request=request, serializer_cls=TaskAuditInCrudModel)
     paginator = await service.upget_paginator(
         task_id=task_id, paginator=paginator, session=session
     )
@@ -46,11 +46,11 @@ async def get_all(
     path="",
     name="创建审计记录",
     status_code=fastapi.status.HTTP_201_CREATED,
-    response_model=ResponseModel[TaskAuditInCRUDResponse],
+    response_model=ResponseModel[TaskAuditInCrudModel],
 )
 async def create(
-    create_model: TaskAuditCreateRequestModel,
+    create_model: TaskAuditCreateModel,
     session: AsyncTxSession = Depends(get_async_tx_session),
-) -> ResponseModel[TaskAuditInCRUDResponse]:
+) -> ResponseModel[TaskAuditInCrudModel]:
     db_obj = await service.create(create_model=create_model, session=session)
-    return ResponseModel(result=TaskAuditInCRUDResponse.model_validate(db_obj))
+    return ResponseModel(result=TaskAuditInCrudModel.model_validate(db_obj))

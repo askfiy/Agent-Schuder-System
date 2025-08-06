@@ -16,9 +16,9 @@ from core.shared.models.http import (
 
 from . import service
 from .models import (
-    TaskInCRUDResponse,
-    TaskCreateRequestModel,
-    TaskUpdateRequestModel,
+    TaskInCrudModel,
+    TaskCreateModel,
+    TaskUpdateModel,
 )
 
 
@@ -35,7 +35,7 @@ async def get_all(
     request: PaginationRequest = Depends(PaginationRequest),
     session: AsyncSession = Depends(get_async_session),
 ) -> PaginationResponse:
-    paginator = Paginator(request=request, serializer_cls=TaskInCRUDResponse)
+    paginator = Paginator(request=request, serializer_cls=TaskInCrudModel)
     paginator = await service.upget_paginator(paginator=paginator, session=session)
     return paginator.response
 
@@ -44,45 +44,45 @@ async def get_all(
     path="/{task_id}",
     name="根据 pk 获取某个 task",
     status_code=fastapi.status.HTTP_200_OK,
-    response_model=ResponseModel[TaskInCRUDResponse],
+    response_model=ResponseModel[TaskInCrudModel],
 )
 async def get(
     task_id: int = fastapi.Path(description="任务 ID"),
     session: AsyncSession = Depends(get_async_session),
-) -> ResponseModel[TaskInCRUDResponse]:
+) -> ResponseModel[TaskInCrudModel]:
     db_obj = await service.get(task_id=task_id, session=session)
-    return ResponseModel(result=TaskInCRUDResponse.model_validate(db_obj))
+    return ResponseModel(result=TaskInCrudModel.model_validate(db_obj))
 
 
 @controller.post(
     path="",
     name="创建 Task",
     status_code=fastapi.status.HTTP_201_CREATED,
-    response_model=ResponseModel[TaskInCRUDResponse],
+    response_model=ResponseModel[TaskInCrudModel],
 )
 async def create(
-    create_model: TaskCreateRequestModel,
+    create_model: TaskCreateModel,
     session: AsyncTxSession = Depends(get_async_tx_session),
-) -> ResponseModel[TaskInCRUDResponse]:
+) -> ResponseModel[TaskInCrudModel]:
     db_obj = await service.create(create_model=create_model, session=session)
-    return ResponseModel(result=TaskInCRUDResponse.model_validate(db_obj))
+    return ResponseModel(result=TaskInCrudModel.model_validate(db_obj))
 
 
 @controller.put(
     path="/{task_id}",
     name="更新 Task",
     status_code=fastapi.status.HTTP_200_OK,
-    response_model=ResponseModel[TaskInCRUDResponse],
+    response_model=ResponseModel[TaskInCrudModel],
 )
 async def update(
-    update_model: TaskUpdateRequestModel,
+    update_model: TaskUpdateModel,
     task_id: int = fastapi.Path(description="任务 ID"),
     session: AsyncTxSession = Depends(get_async_tx_session),
-) -> ResponseModel[TaskInCRUDResponse]:
+) -> ResponseModel[TaskInCrudModel]:
     db_obj = await service.update(
         task_id=task_id, update_model=update_model, session=session
     )
-    return ResponseModel(result=TaskInCRUDResponse.model_validate(db_obj))
+    return ResponseModel(result=TaskInCrudModel.model_validate(db_obj))
 
 
 @controller.delete(

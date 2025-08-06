@@ -1,0 +1,62 @@
+[
+  { "content": "你好啊.", "role": "user" },
+  {
+    "id": "msg_6892f33ed1d0819aaca73d045bc30d1108021ad6d1939c58",
+    "content": [
+      {
+        "annotations": [],
+        "text": "你好呀！有什么我可以帮你的吗？",
+        "type": "output_text",
+        "logprobs": []
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  { "content": "我叫 askfiy\\ 你叫什么", "role": "user" },
+  {
+    "id": "msg_6892f3450e80819a8d17e584d35c8a2208021ad6d1939c58",
+    "content": [
+      {
+        "annotations": [],
+        "text": "你好，askfiy！我是你的AI助手，没有名字，不过你可以随意叫我任何你喜欢的名字。有什么我可以帮你的吗？",
+        "type": "output_text",
+        "logprobs": []
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  { "content": "你好.", "role": "user" },
+  {
+    "id": "msg_6892f34a03a0819ab5c1dd2dba6ae14808021ad6d1939c58",
+    "content": [
+      {
+        "annotations": [],
+        "text": "你好！有什么我可以为你做的吗？",
+        "type": "output_text",
+        "logprobs": []
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  { "content": "好吧,你叫小 a", "role": "user" },
+  {
+    "id": "msg_6892f36391e8819abe90ebbbc9b320b908021ad6d1939c58",
+    "content": [
+      {
+        "annotations": [],
+        "text": "好的，叫我小A就行！有什么需要帮忙的吗？",
+        "type": "output_text",
+        "logprobs": []
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  }
+]

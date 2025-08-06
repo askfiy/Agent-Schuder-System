@@ -4,7 +4,7 @@ from core.shared.enums import TaskState, TaskAuditSource
 from core.shared.base.model import BaseModel
 
 
-class TaskAuditInCRUDResponse(BaseModel):
+class TaskAuditInCrudModel(BaseModel):
     from_state: TaskState
     to_state: TaskState
     source: TaskAuditSource
@@ -13,7 +13,7 @@ class TaskAuditInCRUDResponse(BaseModel):
     created_at: datetime.datetime
 
 
-class TaskAuditCreateRequestModel(BaseModel):
+class TaskAuditCreateModel(BaseModel):
     task_id: int
     from_state: TaskState
     to_state: TaskState

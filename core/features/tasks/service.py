@@ -1,3 +1,5 @@
+from collections.abc import Sequence
+
 from core.shared.models.http import Paginator
 from core.shared.database.session import (
     AsyncSession,
@@ -5,7 +7,7 @@ from core.shared.database.session import (
 )
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import Tasks
-from .models import TaskCreateRequestModel, TaskUpdateRequestModel
+from .models import TaskCreateModel, TaskUpdateModel
 from .repository import TasksCrudRepository
 
 
@@ -22,16 +24,14 @@ async def get(task_id: int, session: AsyncSession) -> Tasks:
     return await get_or_404(repo=repo, pk=task_id)
 
 
-async def create(
-    create_model: TaskCreateRequestModel, session: AsyncTxSession
-) -> Tasks:
+async def create(create_model: TaskCreateModel, session: AsyncTxSession) -> Tasks:
     repo = TasksCrudRepository(session=session)
     db_obj = await repo.create(create_model)
     return db_obj
 
 
 async def update(
-    task_id: int, update_model: TaskUpdateRequestModel, session: AsyncTxSession
+    task_id: int, update_model: TaskUpdateModel, session: AsyncTxSession
 ) -> Tasks:
     repo = TasksCrudRepository(session=session)
     db_obj = await get_or_404(repo=repo, pk=task_id)
@@ -49,3 +49,8 @@ async def delete(task_id: int, session: AsyncTxSession) -> bool:
 async def upget_paginator(paginator: Paginator, session: AsyncSession) -> Paginator:
     repo = TasksCrudRepository(session=session)
     return await repo.upget_paginator(paginator=paginator)
+
+
+async def get_dispatch_tasks_id(session: AsyncTxSession) -> Sequence[int]:
+    repo = TasksCrudRepository(session=session)
+    return await repo.get_dispatch_tasks_id()

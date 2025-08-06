@@ -9,7 +9,7 @@ from ..tasks_chat.models import TaskChatInCrudModel
 from ..tasks_history.models import TaskHistoryInCrudModel
 
 
-class TaskInCRUDResponse(BaseModel):
+class TaskInCrudModel(BaseModel):
     id: int
     name: str
     state: TaskState
@@ -24,17 +24,16 @@ class TaskInCRUDResponse(BaseModel):
     chats: list[TaskChatInCrudModel]
     histories: list[TaskHistoryInCrudModel]
 
-    invocation_id: str | None
-    lasted_execute_time: datetime.datetime | None
+    invocation_id: str | None = None
+    lasted_execute_time: datetime.datetime | None = None
 
     @field_serializer("keywords")
     def _validator_keywords(self, keywords: str) -> list[str]:
         return keywords.split(",")
 
 
-class TaskCreateRequestModel(BaseModel):
+class TaskCreateModel(BaseModel):
     name: str
-    priority: int
     workspace_id: int
     expect_execute_time: datetime.datetime
     owner: str
@@ -47,7 +46,7 @@ class TaskCreateRequestModel(BaseModel):
         return ",".join(keywords)
 
 
-class TaskUpdateRequestModel(BaseModel):
+class TaskUpdateModel(BaseModel):
     name: str | None = None
     state: TaskState | None = None
     priority: int | None = None

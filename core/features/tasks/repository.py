@@ -1,5 +1,6 @@
 import asyncio
 from typing import override, Any
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from sqlalchemy.orm import aliased, subqueryload, with_loader_criteria, joinedload
@@ -8,9 +9,10 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.orm.strategy_options import _AbstractLoad  # pyright: ignore[reportPrivateUsage]
 from sqlalchemy.orm.util import LoaderCriteriaOption
 
+from core.shared.enums import TaskState
 from core.shared.models.http import Paginator
 from core.shared.base.repository import BaseCRUDRepository
-from .models import TaskCreateRequestModel
+from .models import TaskCreateModel
 from .scheme import Tasks
 from ..tasks_chat.scheme import TasksChat
 from ..tasks_unit.scheme import TasksUnit
@@ -87,7 +89,7 @@ class TasksCrudRepository(BaseCRUDRepository[Tasks]):
         ]
 
     @override
-    async def create(self, create_model: TaskCreateRequestModel) -> Tasks:
+    async def create(self, create_model: TaskCreateModel) -> Tasks:
         task = await super().create(create_model=create_model)
 
         # 创建 task 后需要手动 load 一下 chats 和 histories.
@@ -175,3 +177,31 @@ class TasksCrudRepository(BaseCRUDRepository[Tasks]):
             paginator=paginator,
             stmt=query_stmt,
         )
+
+    async def get_dispatch_tasks_id(self) -> Sequence[int]:
+        stmt = (
+            sa.select(self.model.id)
+            .where(
+                sa.not_(self.model.is_deleted),
+                self.model.state.in_([TaskState.INITIAL, TaskState.SCHEDULING]),
+                self.model.expect_execute_time < sa.func.now(),
+            )
+            .order_by(
+                self.model.expect_execute_time.asc(),
+                self.model.priority.desc(),
+                self.model.created_at.asc(),
+            )
+            .with_for_update(skip_locked=True)
+        )
+
+        result = await self.session.execute(stmt)
+
+        tasks_id = result.scalars().unique().all()
+
+        await self.session.execute(
+            sa.update(self.model)
+            .where(self.model.id.in_(tasks_id))
+            .values(state=TaskState.QUEUING)
+        )
+
+        return tasks_id

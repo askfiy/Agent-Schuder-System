@@ -5,7 +5,7 @@ from core.shared.database.session import (
 )
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import TasksAudit
-from .models import TaskAuditCreateRequestModel
+from .models import TaskAuditCreateModel
 from .repository import TasksAuditCrudRepository
 
 
@@ -18,7 +18,7 @@ async def get_or_404(repo: TasksAuditCrudRepository, pk: int):
 
 
 async def create(
-    create_model: TaskAuditCreateRequestModel, session: AsyncTxSession
+    create_model: TaskAuditCreateModel, session: AsyncTxSession
 ) -> TasksAudit:
     repo = TasksAuditCrudRepository(session=session)
     db_obj = await repo.create(create_model)

@@ -1,8 +1,10 @@
 import datetime
+import typing
 from typing import TypeVar
-from pydantic.alias_generators import to_camel
 
 import pydantic
+from pydantic.alias_generators import to_camel
+
 
 T = TypeVar("T")
 
@@ -37,4 +39,28 @@ class BaseModel(pydantic.BaseModel):
         return self
 
 
-__all__ = ["BaseModel", "T"]
+class BaseLLMModel(BaseModel):
+    def model_dump_markdown(self) -> str:
+        md = f"```json\n{self.model_dump_json(indent=2)}\n```\n"
+
+        return md
+
+    @classmethod
+    def model_description(cls) -> str:
+        fields_meta_information: list[str] = []
+
+        for field_name, field_attr in cls.model_fields.items():
+            field_type = field_attr.annotation
+            field_description = field_attr.description or "No field description"
+
+            if field_type and hasattr(field_type, "__name__"):
+                field_type = field_type.__name__
+
+            fields_meta_information.append(
+                f"{field_name} [<{field_type}>]: {field_description}"
+            )
+
+        return "\n".join(fields_meta_information)
+
+
+__all__ = ["BaseModel", "BaseLLMModel", "T"]

@@ -18,6 +18,8 @@ class TaskState(StrEnum):
     FAILED = "failed"
     # 任务已被取消
     CANCELLED = "cancelled"
+    # 用户已更新任务
+    UPDATING = "updating"
 
 
 class TaskUnitState(StrEnum):

@@ -1,3 +1,4 @@
+
 ## `/Users/askfiy/project/coding/agent-scheduler-system/core/config.py`
 
 ```python
@@ -58,6 +59,370 @@ env_helper = Settings()  # pyright: ignore[reportCallIssue]
 
 ```
 
+## `/Users/askfiy/project/coding/agent-scheduler-system/core/features/dispatch/__init__.py`
+
+```python
+import uuid
+import asyncio
+from typing import ClassVar
+
+from core.shared.globals import broker, cacher, g
+from core.shared.components.session import RSession
+from . import service
+from .agent import TaskAgent, TaskProxy
+
+
+class Dispatch:
+    topic: ClassVar[str] = "ready-tasks"
+
+    @classmethod
+    async def producer(cls):
+        while True:
+            tasks_id = await service.get_dispatch_tasks_id()
+            for task_id in tasks_id:
+                await broker.send(topic=cls.topic, message={"task_id": task_id})
+
+            await asyncio.sleep(60)
+
+    @classmethod
+    async def consumer(cls, message: dict[str, int]):
+        g.trace_id = str(uuid.uuid4())
+        task_id: int = message["task_id"]
+
+        task = await TaskProxy.create(task_id=task_id)
+        agent = TaskAgent.create(
+            name="Task-Schedule-Agent",
+            instructions="任务执行调度器",
+            bind_task=task,
+            session=RSession(session_id=g.trace_id, cacher=cacher),
+        )
+        await agent.execute()
+
+    @classmethod
+    async def start(cls):
+        asyncio.create_task(cls.producer())
+        await broker.consumer(topic=cls.topic, callback=cls.consumer, count=5)
+
+    @classmethod
+    async def shutdown(cls):
+        await broker.shutdown()
+
+```
+
+## `/Users/askfiy/project/coding/agent-scheduler-system/core/features/dispatch/agent.py`
+
+```python
+import logging
+from typing import Any
+from dataclasses import dataclass
+
+from agents import Model
+
+from core.shared.components.agent import Agent
+from core.shared.enums import TaskState, TaskAuditSource
+from core.shared.components.session import RSession
+from core.shared.database.session import (
+    get_async_tx_session_direct,
+)
+from ..tasks.scheme import Tasks
+from . import service
+from .models import TaskInDispatchModel, TaskInDispatchUpdateModel
+
+logger = logging.getLogger("Dispatch")
+
+
+class TaskProxy(TaskInDispatchModel):
+    @classmethod
+    async def create(cls, task_id: int) -> "TaskProxy":
+        db_obj = await service.get_task(task_id=task_id)
+        return cls.model_validate(db_obj)
+
+    def _sync(self, other: Tasks):
+        for field_name in self.__class__.model_fields:
+            if hasattr(other, field_name):
+                setattr(self, field_name, getattr(other, field_name))
+
+    async def update(self, update_model: TaskInDispatchUpdateModel):
+        async with get_async_tx_session_direct() as session:
+            from_state = self.state
+            to_state = update_model.state
+
+            # 1. 更新任务状态
+            db_obj = await service.update_task_state(
+                task_id=self.id, state=to_state, session=session
+            )
+
+            # 2. 写审计日志（状态变化 & 模型保证字段完整性）
+            if from_state != to_state:
+                # 模型层确保字段完整性，类型断言只是为了通过类型检查器
+                assert update_model.source is not None
+                assert update_model.source_context is not None
+                assert update_model.comment is not None
+
+                await service.create_task_audit(
+                    task_id=self.id,
+                    from_state=from_state,
+                    to_state=to_state,
+                    source=update_model.source,
+                    source_context=update_model.source_context,
+                    comment=update_model.comment,
+                    session=session,
+                )
+
+            # 3. 写历史记录（无论状态是否变化）
+            if update_model.process and update_model.thinking:
+                await service.update_task_process(
+                    task_id=self.id,
+                    state=to_state,
+                    process=update_model.process,
+                    thinking=update_model.thinking,
+                    session=session,
+                )
+
+            # 4. 同步自身字段
+            self._sync(db_obj)
+
+
+@dataclass
+class TaskAgent:
+    agent: Agent
+    task: TaskProxy
+
+    @classmethod
+    def create(
+        cls,
+        *,
+        name: str,
+        bind_task: TaskProxy,
+        instructions: str | None,
+        model: Model | None = None,
+        session: RSession | None = None,
+        **kwargs: Any,
+    ) -> "TaskAgent":
+        agent_instance = Agent(
+            name=name, instructions=instructions, session=session, model=model, **kwargs
+        )
+        return cls(agent=agent_instance, task=bind_task)
+
+    async def execute(self):
+        logger.info(f"消费任务: {self.task.model_dump_json(indent=2)}")
+
+        await self.task.update(
+            TaskInDispatchUpdateModel(
+                state=TaskState.ACTIVATING,
+                source=TaskAuditSource.SYSTEM,
+                source_context="任务已成功出队并被消费.",
+                comment="开始执行任务中 ..",
+            )
+        )
+
+        print(self.task.model_dump_json(indent=2))
+
+```
+
+## `/Users/askfiy/project/coding/agent-scheduler-system/core/features/dispatch/models.py`
+
+```python
+import datetime
+
+from pydantic import Field, model_validator
+
+from core.shared.enums import TaskState, TaskAuditSource
+from core.shared.base.model import BaseModel, BaseLLMModel
+
+from ..tasks_chat.models import TaskChatInCrudModel
+from ..tasks_history.models import TaskHistoryInCrudModel
+
+
+class TaskInDispatchModel(BaseLLMModel):
+    id: int = Field(description="任务主键")
+    name: str = Field(description="任务名称")
+    state: TaskState = Field(description="当前任务状态")
+    priority: int = Field(description="任务优先级")
+    workspace_id: int = Field(description="任务关联工作区")
+
+    expect_execute_time: datetime.datetime = Field(description="任务预期执行时间")
+    lasted_execute_time: datetime.datetime | None = Field(
+        description="任务最后执行时间"
+    )
+
+    original_user_input: str = Field(description="原始用户输入")
+    chats: list[TaskChatInCrudModel] = Field(description="任务和用户的交互历史")
+    histories: list[TaskHistoryInCrudModel] = Field(description="LLM 执行历史")
+
+
+class TaskInDispatchUpdateModel(BaseModel):
+    state: TaskState
+
+    source: TaskAuditSource | None = None
+    source_context: str | None = None
+    comment: str | None = None
+
+    process: str | None = None
+    thinking: str | None = None
+
+    @model_validator(mode="after")
+    def validate_audit_dependency(self) -> "TaskInDispatchUpdateModel":
+        """
+        验证规则 (二选一即可通过):
+            - 所有审计字段必须“同生共死”。
+            - 所有历史字段必须“同生共死”
+        """
+
+        validation_audit = all(
+            {
+                bool(self.source),
+                bool(self.source_context),
+                bool(self.comment),
+            }
+        )
+
+        validation_histories = all(
+            {
+                bool(self.process),
+                bool(self.thinking),
+            }
+        )
+
+        if not any([validation_audit, validation_histories]):
+            raise ValueError(
+                "When updating state, 'state' and all audit fields ('source', 'source_context', 'comment') or all histories fields ('process', 'thinking') must be provided together."
+            )
+
+        return self
+
+```
+
+## `/Users/askfiy/project/coding/agent-scheduler-system/core/features/dispatch/service.py`
+
+```python
+import datetime
+from collections.abc import Sequence
+
+from core.shared.enums import TaskState, TaskAuditSource
+from core.shared.database.session import (
+    get_async_session_direct,
+    get_async_tx_session_direct,
+    AsyncSession,
+    AsyncTxSession,
+)
+from ..tasks.scheme import Tasks
+from ..tasks_chat.scheme import TasksChat
+from ..tasks_unit.scheme import TasksUnit
+from ..tasks_audit.scheme import TasksAudit
+from ..tasks_history.scheme import TasksHistory
+from ..tasks_workspace.scheme import TasksWorkspace
+from ..tasks import service as tasks_service
+from ..tasks_chat import service as tasks_chat_service
+from ..tasks_unit import service as tasks_unit_service
+from ..tasks_audit import service as tasks_audit_service
+from ..tasks_history import service as tasks_history_service
+from ..tasks_workspace import service as tasks_workspace_service
+from ..tasks.models import TaskCreateModel, TaskUpdateModel
+from ..tasks_audit.models import TaskAuditCreateModel
+from ..tasks_history.models import TaskHistoryCreateModel
+from ..tasks_workspace.models import TaskWorkspaceCreateModel
+
+
+async def get_task(task_id: int) -> Tasks:
+    """
+    获取任务
+    """
+    async with get_async_session_direct() as session:
+        return await tasks_service.get(task_id, session=session)
+
+
+async def get_dispatch_tasks_id() -> Sequence[int]:
+    """
+    获取调度任务
+    """
+    async with get_async_tx_session_direct() as session:
+        return await tasks_service.get_dispatch_tasks_id(session=session)
+
+
+async def create_task(
+    prd: str,
+    name: str,
+    expect_execute_time: datetime.datetime,
+    owner: str,
+    owner_timezone: str,
+    keywords: list[str],
+    original_user_input: str,
+) -> Tasks:
+    """
+    创建任务
+    """
+    async with get_async_tx_session_direct() as session:
+        # 1. 先创建工作空间, 生成需求 PRD 等.
+        workspace = await tasks_workspace_service.create(
+            create_model=TaskWorkspaceCreateModel(prd=prd),
+            session=session,
+        )
+
+        # 2. 再创建任务
+        task = await tasks_service.create(
+            create_model=TaskCreateModel(
+                name=name,
+                workspace_id=workspace.id,
+                expect_execute_time=expect_execute_time,
+                owner=owner,
+                owner_timezone=owner_timezone,
+                keywords=keywords,
+                original_user_input=original_user_input,
+            ),
+            session=session,
+        )
+        return task
+
+
+async def update_task_state(
+    task_id: int, state: TaskState, session: AsyncTxSession
+) -> Tasks:
+    # 更新任务本身状态
+    task = await tasks_service.update(
+        task_id=task_id,
+        update_model=TaskUpdateModel(state=state),
+        session=session,
+    )
+
+    return task
+
+
+async def create_task_audit(
+    task_id: int,
+    from_state: TaskState,
+    to_state: TaskState,
+    source: TaskAuditSource,
+    source_context: str,
+    comment: str,
+    session: AsyncTxSession,
+) -> TasksAudit:
+    # 创建审计日志
+    return await tasks_audit_service.create(
+        create_model=TaskAuditCreateModel(
+            task_id=task_id,
+            from_state=from_state,
+            to_state=to_state,
+            source=source,
+            source_context=source_context,
+            comment=comment,
+        ),
+        session=session,
+    )
+
+
+async def update_task_process(
+    task_id: int, state: TaskState, process: str, thinking: str, session: AsyncSession
+) -> TasksHistory:
+    return await tasks_history_service.create(
+        create_model=TaskHistoryCreateModel(
+            task_id=task_id, state=state, process=process, thinking=thinking
+        ),
+        session=session,
+    )
+
+```
+
 ## `/Users/askfiy/project/coding/agent-scheduler-system/core/features/tasks/models.py`
 
 ```python
@@ -72,7 +437,7 @@ from ..tasks_chat.models import TaskChatInCrudModel
 from ..tasks_history.models import TaskHistoryInCrudModel
 
 
-class TaskInCRUDResponse(BaseModel):
+class TaskInCrudModel(BaseModel):
     id: int
     name: str
     state: TaskState
@@ -87,17 +452,16 @@ class TaskInCRUDResponse(BaseModel):
     chats: list[TaskChatInCrudModel]
     histories: list[TaskHistoryInCrudModel]
 
-    invocation_id: str | None
-    lasted_execute_time: datetime.datetime | None
+    invocation_id: str | None = None
+    lasted_execute_time: datetime.datetime | None = None
 
     @field_serializer("keywords")
     def _validator_keywords(self, keywords: str) -> list[str]:
         return keywords.split(",")
 
 
-class TaskCreateRequestModel(BaseModel):
+class TaskCreateModel(BaseModel):
     name: str
-    priority: int
     workspace_id: int
     expect_execute_time: datetime.datetime
     owner: str
@@ -110,7 +474,7 @@ class TaskCreateRequestModel(BaseModel):
         return ",".join(keywords)
 
 
-class TaskUpdateRequestModel(BaseModel):
+class TaskUpdateModel(BaseModel):
     name: str | None = None
     state: TaskState | None = None
     priority: int | None = None
@@ -135,6 +499,7 @@ class TaskUpdateRequestModel(BaseModel):
 ```python
 import asyncio
 from typing import override, Any
+from collections.abc import Sequence
 
 import sqlalchemy as sa
 from sqlalchemy.orm import aliased, subqueryload, with_loader_criteria, joinedload
@@ -143,9 +508,10 @@ from sqlalchemy.orm.attributes import InstrumentedAttribute
 from sqlalchemy.orm.strategy_options import _AbstractLoad  # pyright: ignore[reportPrivateUsage]
 from sqlalchemy.orm.util import LoaderCriteriaOption
 
+from core.shared.enums import TaskState
 from core.shared.models.http import Paginator
 from core.shared.base.repository import BaseCRUDRepository
-from .models import TaskCreateRequestModel
+from .models import TaskCreateModel
 from .scheme import Tasks
 from ..tasks_chat.scheme import TasksChat
 from ..tasks_unit.scheme import TasksUnit
@@ -154,7 +520,7 @@ from ..tasks_history.scheme import TasksHistory
 from ..tasks_workspace.service import delete as workspace_delete
 
 
-class TasksCrudRespository(BaseCRUDRepository[Tasks]):
+class TasksCrudRepository(BaseCRUDRepository[Tasks]):
     def __init__(self, session: AsyncSession):
         super().__init__(session=session)
 
@@ -222,7 +588,7 @@ class TasksCrudRespository(BaseCRUDRepository[Tasks]):
         ]
 
     @override
-    async def create(self, create_model: TaskCreateRequestModel) -> Tasks:
+    async def create(self, create_model: TaskCreateModel) -> Tasks:
         task = await super().create(create_model=create_model)
 
         # 创建 task 后需要手动 load 一下 chats 和 histories.
@@ -311,6 +677,34 @@ class TasksCrudRespository(BaseCRUDRepository[Tasks]):
             stmt=query_stmt,
         )
 
+    async def get_dispatch_tasks_id(self) -> Sequence[int]:
+        stmt = (
+            sa.select(self.model.id)
+            .where(
+                sa.not_(self.model.is_deleted),
+                self.model.state.in_([TaskState.INITIAL, TaskState.SCHEDULING]),
+                self.model.expect_execute_time < sa.func.now(),
+            )
+            .order_by(
+                self.model.expect_execute_time.asc(),
+                self.model.priority.desc(),
+                self.model.created_at.asc(),
+            )
+            .with_for_update(skip_locked=True)
+        )
+
+        result = await self.session.execute(stmt)
+
+        tasks_id = result.scalars().unique().all()
+
+        await self.session.execute(
+            sa.update(self.model)
+            .where(self.model.id.in_(tasks_id))
+            .values(state=TaskState.ENQUEUED)
+        )
+
+        return tasks_id
+
 ```
 
 ## `/Users/askfiy/project/coding/agent-scheduler-system/core/features/tasks/router.py`
@@ -334,9 +728,9 @@ from core.shared.models.http import (
 
 from . import service
 from .models import (
-    TaskInCRUDResponse,
-    TaskCreateRequestModel,
-    TaskUpdateRequestModel,
+    TaskInCrudModel,
+    TaskCreateModel,
+    TaskUpdateModel,
 )
 
 
@@ -353,7 +747,7 @@ async def get_all(
     request: PaginationRequest = Depends(PaginationRequest),
     session: AsyncSession = Depends(get_async_session),
 ) -> PaginationResponse:
-    paginator = Paginator(request=request, serializer_cls=TaskInCRUDResponse)
+    paginator = Paginator(request=request, serializer_cls=TaskInCrudModel)
     paginator = await service.upget_paginator(paginator=paginator, session=session)
     return paginator.response
 
@@ -362,45 +756,45 @@ async def get_all(
     path="/{task_id}",
     name="根据 pk 获取某个 task",
     status_code=fastapi.status.HTTP_200_OK,
-    response_model=ResponseModel[TaskInCRUDResponse],
+    response_model=ResponseModel[TaskInCrudModel],
 )
 async def get(
     task_id: int = fastapi.Path(description="任务 ID"),
     session: AsyncSession = Depends(get_async_session),
-) -> ResponseModel[TaskInCRUDResponse]:
+) -> ResponseModel[TaskInCrudModel]:
     db_obj = await service.get(task_id=task_id, session=session)
-    return ResponseModel(result=TaskInCRUDResponse.model_validate(db_obj))
+    return ResponseModel(result=TaskInCrudModel.model_validate(db_obj))
 
 
 @controller.post(
     path="",
     name="创建 Task",
     status_code=fastapi.status.HTTP_201_CREATED,
-    response_model=ResponseModel[TaskInCRUDResponse],
+    response_model=ResponseModel[TaskInCrudModel],
 )
 async def create(
-    create_model: TaskCreateRequestModel,
+    create_model: TaskCreateModel,
     session: AsyncTxSession = Depends(get_async_tx_session),
-) -> ResponseModel[TaskInCRUDResponse]:
+) -> ResponseModel[TaskInCrudModel]:
     db_obj = await service.create(create_model=create_model, session=session)
-    return ResponseModel(result=TaskInCRUDResponse.model_validate(db_obj))
+    return ResponseModel(result=TaskInCrudModel.model_validate(db_obj))
 
 
 @controller.put(
     path="/{task_id}",
     name="更新 Task",
     status_code=fastapi.status.HTTP_200_OK,
-    response_model=ResponseModel[TaskInCRUDResponse],
+    response_model=ResponseModel[TaskInCrudModel],
 )
 async def update(
-    update_model: TaskUpdateRequestModel,
+    update_model: TaskUpdateModel,
     task_id: int = fastapi.Path(description="任务 ID"),
     session: AsyncTxSession = Depends(get_async_tx_session),
-) -> ResponseModel[TaskInCRUDResponse]:
+) -> ResponseModel[TaskInCrudModel]:
     db_obj = await service.update(
         task_id=task_id, update_model=update_model, session=session
     )
-    return ResponseModel(result=TaskInCRUDResponse.model_validate(db_obj))
+    return ResponseModel(result=TaskInCrudModel.model_validate(db_obj))
 
 
 @controller.delete(
@@ -548,6 +942,8 @@ class Tasks(BaseTableScheme):
 ## `/Users/askfiy/project/coding/agent-scheduler-system/core/features/tasks/service.py`
 
 ```python
+from collections.abc import Sequence
+
 from core.shared.models.http import Paginator
 from core.shared.database.session import (
     AsyncSession,
@@ -555,11 +951,11 @@ from core.shared.database.session import (
 )
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import Tasks
-from .models import TaskCreateRequestModel, TaskUpdateRequestModel
-from .repository import TasksCrudRespository
+from .models import TaskCreateModel, TaskUpdateModel
+from .repository import TasksCrudRepository
 
 
-async def get_or_404(repo: TasksCrudRespository, pk: int):
+async def get_or_404(repo: TasksCrudRepository, pk: int):
     db_obj = await repo.get(pk=pk)
     if not db_obj:
         raise ServiceNotFoundException(f"任务: {pk} 不存在")
@@ -568,37 +964,40 @@ async def get_or_404(repo: TasksCrudRespository, pk: int):
 
 
 async def get(task_id: int, session: AsyncSession) -> Tasks:
-    repo = TasksCrudRespository(session=session)
+    repo = TasksCrudRepository(session=session)
     return await get_or_404(repo=repo, pk=task_id)
 
 
-async def create(
-    create_model: TaskCreateRequestModel, session: AsyncTxSession
-) -> Tasks:
-    repo = TasksCrudRespository(session=session)
+async def create(create_model: TaskCreateModel, session: AsyncTxSession) -> Tasks:
+    repo = TasksCrudRepository(session=session)
     db_obj = await repo.create(create_model)
     return db_obj
 
 
 async def update(
-    task_id: int, update_model: TaskUpdateRequestModel, session: AsyncTxSession
+    task_id: int, update_model: TaskUpdateModel, session: AsyncTxSession
 ) -> Tasks:
-    repo = TasksCrudRespository(session=session)
+    repo = TasksCrudRepository(session=session)
     db_obj = await get_or_404(repo=repo, pk=task_id)
     db_obj = await repo.update(db_obj, update_model=update_model)
     return db_obj
 
 
 async def delete(task_id: int, session: AsyncTxSession) -> bool:
-    repo = TasksCrudRespository(session=session)
+    repo = TasksCrudRepository(session=session)
     db_obj = await get_or_404(repo=repo, pk=task_id)
     db_obj = await repo.delete(db_obj=db_obj)
     return bool(db_obj.is_deleted)
 
 
 async def upget_paginator(paginator: Paginator, session: AsyncSession) -> Paginator:
-    repo = TasksCrudRespository(session=session)
+    repo = TasksCrudRepository(session=session)
     return await repo.upget_paginator(paginator=paginator)
+
+
+async def get_dispatch_tasks_id(session: AsyncTxSession) -> Sequence[int]:
+    repo = TasksCrudRepository(session=session)
+    return await repo.get_dispatch_tasks_id()
 
 ```
 
@@ -611,7 +1010,7 @@ from core.shared.enums import TaskState, TaskAuditSource
 from core.shared.base.model import BaseModel
 
 
-class TaskAuditInCRUDResponse(BaseModel):
+class TaskAuditInCrudModel(BaseModel):
     from_state: TaskState
     to_state: TaskState
     source: TaskAuditSource
@@ -620,7 +1019,7 @@ class TaskAuditInCRUDResponse(BaseModel):
     created_at: datetime.datetime
 
 
-class TaskAuditCreateRequestModel(BaseModel):
+class TaskAuditCreateModel(BaseModel):
     task_id: int
     from_state: TaskState
     to_state: TaskState
@@ -640,7 +1039,7 @@ from core.shared.base.repository import BaseCRUDRepository
 from .scheme import TasksAudit
 
 
-class TasksAuditCrudRespository(BaseCRUDRepository[TasksAudit]):
+class TasksAuditCrudRepository(BaseCRUDRepository[TasksAudit]):
     async def upget_paginator(
         self,
         task_id: int,
@@ -654,7 +1053,6 @@ class TasksAuditCrudRespository(BaseCRUDRepository[TasksAudit]):
             paginator=paginator,
             stmt=query_stmt,
         )
-
 
 ```
 
@@ -679,8 +1077,8 @@ from core.shared.models.http import (
 
 from . import service
 from .models import (
-    TaskAuditInCRUDResponse,
-    TaskAuditCreateRequestModel,
+    TaskAuditInCrudModel,
+    TaskAuditCreateModel,
 )
 
 
@@ -698,7 +1096,7 @@ async def get_all(
     request: PaginationRequest = Depends(PaginationRequest),
     session: AsyncSession = Depends(get_async_session),
 ) -> PaginationResponse:
-    paginator = Paginator(request=request, serializer_cls=TaskAuditInCRUDResponse)
+    paginator = Paginator(request=request, serializer_cls=TaskAuditInCrudModel)
     paginator = await service.upget_paginator(
         task_id=task_id, paginator=paginator, session=session
     )
@@ -709,14 +1107,14 @@ async def get_all(
     path="",
     name="创建审计记录",
     status_code=fastapi.status.HTTP_201_CREATED,
-    response_model=ResponseModel[TaskAuditInCRUDResponse],
+    response_model=ResponseModel[TaskAuditInCrudModel],
 )
 async def create(
-    create_model: TaskAuditCreateRequestModel,
+    create_model: TaskAuditCreateModel,
     session: AsyncTxSession = Depends(get_async_tx_session),
-) -> ResponseModel[TaskAuditInCRUDResponse]:
+) -> ResponseModel[TaskAuditInCrudModel]:
     db_obj = await service.create(create_model=create_model, session=session)
-    return ResponseModel(result=TaskAuditInCRUDResponse.model_validate(db_obj))
+    return ResponseModel(result=TaskAuditInCrudModel.model_validate(db_obj))
 
 ```
 
@@ -791,11 +1189,11 @@ from core.shared.database.session import (
 )
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import TasksAudit
-from .models import TaskAuditCreateRequestModel
-from .repository import TasksAuditCrudRespository
+from .models import TaskAuditCreateModel
+from .repository import TasksAuditCrudRepository
 
 
-async def get_or_404(repo: TasksAuditCrudRespository, pk: int):
+async def get_or_404(repo: TasksAuditCrudRepository, pk: int):
     db_obj = await repo.get(pk=pk)
     if not db_obj:
         raise ServiceNotFoundException(f"任务审计记录: {pk} 不存在")
@@ -804,9 +1202,9 @@ async def get_or_404(repo: TasksAuditCrudRespository, pk: int):
 
 
 async def create(
-    create_model: TaskAuditCreateRequestModel, session: AsyncTxSession
+    create_model: TaskAuditCreateModel, session: AsyncTxSession
 ) -> TasksAudit:
-    repo = TasksAuditCrudRespository(session=session)
+    repo = TasksAuditCrudRepository(session=session)
     db_obj = await repo.create(create_model)
     return db_obj
 
@@ -814,7 +1212,7 @@ async def create(
 async def upget_paginator(
     task_id: int, paginator: Paginator, session: AsyncSession
 ) -> Paginator:
-    repo = TasksAuditCrudRespository(session=session)
+    repo = TasksAuditCrudRepository(session=session)
     return await repo.upget_paginator(task_id=task_id, paginator=paginator)
 
 ```
@@ -851,7 +1249,7 @@ from core.shared.base.repository import BaseCRUDRepository
 from .scheme import TasksChat
 
 
-class TasksChatCrudRespository(BaseCRUDRepository[TasksChat]):
+class TasksChatCrudRepository(BaseCRUDRepository[TasksChat]):
     async def upget_paginator(
         self,
         task_id: int,
@@ -865,7 +1263,6 @@ class TasksChatCrudRespository(BaseCRUDRepository[TasksChat]):
             paginator=paginator,
             stmt=query_stmt,
         )
-
 
 ```
 
@@ -989,10 +1386,10 @@ from core.shared.database.session import (
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import TasksChat
 from .models import TaskChatCreateModel
-from .repository import TasksChatCrudRespository
+from .repository import TasksChatCrudRepository
 
 
-async def get_or_404(repo: TasksChatCrudRespository, pk: int):
+async def get_or_404(repo: TasksChatCrudRepository, pk: int):
     db_obj = await repo.get(pk=pk)
     if not db_obj:
         raise ServiceNotFoundException(f"任务对话记录: {pk} 不存在")
@@ -1004,7 +1401,7 @@ async def get_or_404(repo: TasksChatCrudRespository, pk: int):
 async def create(
     create_model: TaskChatCreateModel, session: AsyncTxSession
 ) -> TasksChat:
-    repo = TasksChatCrudRespository(session=session)
+    repo = TasksChatCrudRepository(session=session)
     db_obj = await repo.create(create_model)
     return db_obj
 
@@ -1013,7 +1410,7 @@ async def create(
 async def upget_paginator(
     task_id: int, paginator: Paginator, session: AsyncSession
 ) -> Paginator:
-    repo = TasksChatCrudRespository(session=session)
+    repo = TasksChatCrudRepository(session=session)
     return await repo.upget_paginator(task_id=task_id, paginator=paginator)
 
 ```
@@ -1052,7 +1449,7 @@ from core.shared.base.repository import BaseCRUDRepository
 from .scheme import TasksHistory
 
 
-class TasksHistoryCrudRespository(BaseCRUDRepository[TasksHistory]):
+class TasksHistoryCrudRepository(BaseCRUDRepository[TasksHistory]):
     async def upget_paginator(
         self,
         task_id: int,
@@ -1195,10 +1592,10 @@ from core.shared.database.session import (
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import TasksHistory
 from .models import TaskHistoryCreateModel
-from .repository import TasksHistoryCrudRespository
+from .repository import TasksHistoryCrudRepository
 
 
-async def get_or_404(repo: TasksHistoryCrudRespository, pk: int):
+async def get_or_404(repo: TasksHistoryCrudRepository, pk: int):
     db_obj = await repo.get(pk=pk)
     if not db_obj:
         raise ServiceNotFoundException(f"任务执行记录: {pk} 不存在")
@@ -1209,7 +1606,7 @@ async def get_or_404(repo: TasksHistoryCrudRespository, pk: int):
 async def create(
     create_model: TaskHistoryCreateModel, session: AsyncTxSession
 ) -> TasksHistory:
-    repo = TasksHistoryCrudRespository(session=session)
+    repo = TasksHistoryCrudRepository(session=session)
     db_obj = await repo.create(create_model)
     return db_obj
 
@@ -1217,7 +1614,7 @@ async def create(
 async def upget_paginator(
     task_id: int, paginator: Paginator, session: AsyncSession
 ) -> Paginator:
-    repo = TasksHistoryCrudRespository(session=session)
+    repo = TasksHistoryCrudRepository(session=session)
     return await repo.upget_paginator(task_id=task_id, paginator=paginator)
 
 ```
@@ -1265,7 +1662,7 @@ from core.shared.base.repository import BaseCRUDRepository
 from .scheme import TasksUnit
 
 
-class TasksUnitCrudRespository(BaseCRUDRepository[TasksUnit]):
+class TasksUnitCrudRepository(BaseCRUDRepository[TasksUnit]):
     async def upget_paginator(
         self,
         task_id: int,
@@ -1279,7 +1676,6 @@ class TasksUnitCrudRespository(BaseCRUDRepository[TasksUnit]):
             paginator=paginator,
             stmt=query_stmt,
         )
-
 
 ```
 
@@ -1440,10 +1836,10 @@ from core.shared.database.session import (
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import TasksUnit
 from .models import TaskUnitCreateModel, TaskUnitUpdateModel
-from .repository import TasksUnitCrudRespository
+from .repository import TasksUnitCrudRepository
 
 
-async def get_or_404(repo: TasksUnitCrudRespository, pk: int):
+async def get_or_404(repo: TasksUnitCrudRepository, pk: int):
     db_obj = await repo.get(pk=pk)
     if not db_obj:
         raise ServiceNotFoundException(f"任务执行单元: {pk} 不存在")
@@ -1454,7 +1850,7 @@ async def get_or_404(repo: TasksUnitCrudRespository, pk: int):
 async def create(
     create_model: TaskUnitCreateModel, session: AsyncTxSession
 ) -> TasksUnit:
-    repo = TasksUnitCrudRespository(session=session)
+    repo = TasksUnitCrudRepository(session=session)
     db_obj = await repo.create(create_model)
     return db_obj
 
@@ -1462,7 +1858,7 @@ async def create(
 async def update(
     unit_id: int, update_model: TaskUnitUpdateModel, session: AsyncTxSession
 ) -> TasksUnit:
-    repo = TasksUnitCrudRespository(session=session)
+    repo = TasksUnitCrudRepository(session=session)
     db_obj = await get_or_404(repo=repo, pk=unit_id)
     db_obj = await repo.update(db_obj, update_model=update_model)
     return db_obj
@@ -1471,7 +1867,7 @@ async def update(
 async def upget_paginator(
     task_id: int, paginator: Paginator, session: AsyncSession
 ) -> Paginator:
-    repo = TasksUnitCrudRespository(session=session)
+    repo = TasksUnitCrudRepository(session=session)
     return await repo.upget_paginator(task_id=task_id, paginator=paginator)
 
 ```
@@ -1508,7 +1904,7 @@ from core.shared.base.repository import BaseCRUDRepository
 from .scheme import TasksWorkspace
 
 
-class TasksWorkspaceCrudRespository(BaseCRUDRepository[TasksWorkspace]):
+class TasksWorkspaceCrudRepository(BaseCRUDRepository[TasksWorkspace]):
     pass
 
 ```
@@ -1643,10 +2039,10 @@ from core.shared.database.session import (
 from core.shared.exceptions import ServiceNotFoundException
 from .scheme import TasksWorkspace
 from .models import TaskWorkspaceCreateModel, TaskWorkspaceUpdateModel
-from .repository import TasksWorkspaceCrudRespository
+from .repository import TasksWorkspaceCrudRepository
 
 
-async def get_or_404(repo: TasksWorkspaceCrudRespository, pk: int):
+async def get_or_404(repo: TasksWorkspaceCrudRepository, pk: int):
     db_obj = await repo.get(pk=pk)
     if not db_obj:
         raise ServiceNotFoundException(f"任务工作空间: {pk} 不存在")
@@ -1655,14 +2051,14 @@ async def get_or_404(repo: TasksWorkspaceCrudRespository, pk: int):
 
 
 async def get(workspace_id: int, session: AsyncSession) -> TasksWorkspace:
-    repo = TasksWorkspaceCrudRespository(session=session)
+    repo = TasksWorkspaceCrudRepository(session=session)
     return await get_or_404(repo=repo, pk=workspace_id)
 
 
 async def create(
     create_model: TaskWorkspaceCreateModel, session: AsyncTxSession
 ) -> TasksWorkspace:
-    repo = TasksWorkspaceCrudRespository(session=session)
+    repo = TasksWorkspaceCrudRepository(session=session)
     db_obj = await repo.create(create_model)
     return db_obj
 
@@ -1670,16 +2066,14 @@ async def create(
 async def update(
     workspace_id: int, update_model: TaskWorkspaceUpdateModel, session: AsyncTxSession
 ) -> TasksWorkspace:
-    repo = TasksWorkspaceCrudRespository(session=session)
-    db_obj = await repo.get(pk=workspace_id)
+    repo = TasksWorkspaceCrudRepository(session=session)
     db_obj = await get_or_404(repo=repo, pk=workspace_id)
     db_obj = await repo.update(db_obj, update_model=update_model)
     return db_obj
 
 
 async def delete(workspace_id: int, session: AsyncTxSession) -> bool:
-    repo = TasksWorkspaceCrudRespository(session=session)
-    db_obj = await repo.get(pk=workspace_id)
+    repo = TasksWorkspaceCrudRepository(session=session)
     db_obj = await get_or_404(repo=repo, pk=workspace_id)
     db_obj = await repo.delete(db_obj=db_obj)
     return bool(db_obj.is_deleted)
@@ -1867,10 +2261,12 @@ __all__ = [
 
 ```python
 import datetime
+import typing
 from typing import TypeVar
-from pydantic.alias_generators import to_camel
 
 import pydantic
+from pydantic.alias_generators import to_camel
+
 
 T = TypeVar("T")
 
@@ -1905,7 +2301,31 @@ class BaseModel(pydantic.BaseModel):
         return self
 
 
-__all__ = ["BaseModel", "T"]
+class BaseLLMModel(BaseModel):
+    def model_dump_markdown(self) -> str:
+        md = f"```json\n{self.model_dump_json(indent=2)}\n```\n"
+
+        return md
+
+    @classmethod
+    def model_description(cls) -> str:
+        fields_meta_information: list[str] = []
+
+        for field_name, field_attr in cls.model_fields.items():
+            field_type = field_attr.annotation
+            field_description = field_attr.description or "No field description"
+
+            if field_type and hasattr(field_type, "__name__"):
+                field_type = field_type.__name__
+
+            fields_meta_information.append(
+                f"{field_name} [<{field_type}>]: {field_description}"
+            )
+
+        return "\n".join(fields_meta_information)
+
+
+__all__ = ["BaseModel", "BaseLLMModel", "T"]
 
 ```
 
@@ -2179,6 +2599,92 @@ __all__ = ["RBroker", "RCacher"]
 
 ```
 
+## `/Users/askfiy/project/coding/agent-scheduler-system/core/shared/components/agent.py`
+
+```python
+from collections.abc import Callable
+from typing import Any
+
+from agents import (
+    Agent as BasicAgent,
+    Model,
+    ModelSettings,
+    RunContextWrapper,
+    Runner,
+    TContext,
+)
+from agents.agent_output import AgentOutputSchemaBase
+from agents.items import TResponseInputItem
+from agents.result import RunResult, RunResultStreaming
+from agents.util._types import MaybeAwaitable
+
+from core.shared.base.model import BaseLLMModel
+from .session import RSession
+
+
+class Agent:
+    """
+    基于 openai-agents 封装的 Agent.
+
+    - 支持 Agent 多轮会话 session (每次会话用不同的 session 或统一用 Agent 创建时的 session 实现关联对话).
+    - 支持 Agent 每次 run 的时候生成不同的结构化对象.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        instructions: (
+            str
+            | Callable[
+                [RunContextWrapper[TContext], BasicAgent[TContext]],
+                MaybeAwaitable[str],
+            ]
+            | None
+        ) = None,
+        model: Model | None = None,
+        session: RSession | None = None,
+        **kwargs: Any,
+    ):
+        self.name = name
+        self.instructions = instructions
+        self.model = model
+        self.session = session
+
+        self.agent = BasicAgent(
+            name=self.name,
+            instructions=self.instructions,
+            model=self.model,
+            model_settings=ModelSettings(include_usage=True),
+            **kwargs,
+        )
+
+    def run_streamed(
+        self,
+        input: str | list[TResponseInputItem],
+        session: RSession | None = None,
+        output_type: type[BaseLLMModel] | AgentOutputSchemaBase | None = None,
+        **kwargs: Any,
+    ) -> RunResultStreaming:
+        agent = self.agent.clone(output_type=output_type, **kwargs)
+        return Runner.run_streamed(agent, input=input, session=session or self.session)
+
+    async def run(
+        self,
+        input: str | list[TResponseInputItem],
+        session: RSession | None = None,
+        output_type: type[BaseLLMModel] | AgentOutputSchemaBase | None = None,
+        **kwargs: Any,
+    ) -> RunResult:
+        agent = self.agent.clone(output_type=output_type, **kwargs)
+        run_result = await Runner.run(
+            agent,
+            input=input,
+            session=session or self.session,
+        )
+        return run_result
+
+```
+
 ## `/Users/askfiy/project/coding/agent-scheduler-system/core/shared/components/broker.py`
 
 ```python
@@ -2307,7 +2813,6 @@ class RBroker:
             "message": rbroker_message.model_dump_json()
         }
         message_id = await self._client.xadd(topic, message_payload)
-        logging.info(f"Sent message {message_id} to topic '{topic}'")
         return message_id
 
     async def consumer(
@@ -2337,7 +2842,6 @@ class RBroker:
                 self._consume_worker(topic, group_id, consumer_name, callback)
             )
             self._consumer_tasks.append(task)
-            logging.info(f"Started consumer task '{consumer_name}' on topic '{topic}'.")
 
     async def shutdown(self):
         logging.info("Shutting down consumer tasks...")
@@ -2354,6 +2858,7 @@ class RBroker:
 
 ```python
 import json
+import typing
 from typing import Any
 
 import redis.asyncio as redis
@@ -2362,6 +2867,7 @@ import redis.asyncio as redis
 class RCacher:
     """
     基于 Redis 实现的 Simple 缓存系统
+    在创建客户端时设置 decode_responses=True.
     """
 
     def __init__(self, redis_client: redis.Redis):
@@ -2372,7 +2878,6 @@ class RCacher:
 
     async def get(self, key: str, default: Any = None) -> Any:
         value = await self._client.get(key)
-
         if value is None:
             return default
 
@@ -2394,16 +2899,99 @@ class RCacher:
 
         await self._client.set(key, value, ex=ttl)
 
-    async def delete(self, key: str) -> int:
-        return await self._client.delete(key)
+    async def delete(self, key: str) -> bool:
+        return await self._client.delete(key) > 0
 
-    async def persist(self, key: str) -> bool:
-        current_ttl = await self._client.ttl(key)
+    async def ttl(self, key: str) -> int:
+        return await self._client.ttl(key)
 
-        if current_ttl == -1:
-            raise ValueError(f"Key '{key}' has no TTL. Cannot persist.")
+    async def expire(self, key: str, ttl: int) -> bool:
+        return await self._client.expire(key, ttl)
 
-        return await self._client.persist(key)
+    async def list_length(self, key: str) -> int:
+        return typing.cast("int", await self._client.llen(key))  # pyright: ignore[reportGeneralTypeIssues]
+
+    async def list_get_all(self, key: str) -> list[Any]:
+        items_str: list[Any] = typing.cast(
+            "list[Any]",
+            await self._client.lrange(key, 0, -1),  # pyright: ignore[reportUnknownMemberType, reportGeneralTypeIssues]
+        )
+
+        if not items_str:
+            return []
+
+        items: list[Any] = []
+        for item_str in items_str:
+            try:
+                items.append(json.loads(item_str))
+            except (json.JSONDecodeError, TypeError):
+                items.append(item_str)
+        return items
+
+    async def list_push_left_many(self, key: str, values: list[Any]) -> int:
+        if not values:
+            return await self.list_length(key)
+
+        values_str = [json.dumps(v) for v in values]
+        return typing.cast("int", await self._client.lpush(key, *values_str))  # pyright: ignore[reportGeneralTypeIssues]
+
+    async def list_pop_right(self, key: str) -> Any | None:
+        item_str: str | None = typing.cast("str | None", await self._client.rpop(key))  # pyright: ignore[reportUnknownMemberType, reportGeneralTypeIssues]
+        if item_str is None:
+            return None
+
+        try:
+            return json.loads(item_str)
+        except (json.JSONDecodeError, TypeError):
+            return item_str
+
+```
+
+## `/Users/askfiy/project/coding/agent-scheduler-system/core/shared/components/session.py`
+
+```python
+from typing import override
+
+from agents import Session
+from agents.items import TResponseInputItem
+
+from . import RCacher
+
+
+class RSession(Session):
+    """
+    基于 RCacher 实现的、并发安全的 openai.agents session 管理。
+    所有列表操作都基于 Redis 的原子命令，避免了竞态条件。
+    """
+
+    def __init__(self, session_id: str, cacher: RCacher, ttl: int = 3600):
+        self.session_id = session_id
+        self.cacher = cacher
+        self.ttl = ttl
+
+    @override
+    async def get_items(self, limit: int | None = None) -> list[TResponseInputItem]:
+        items: list[TResponseInputItem] = await self.cacher.list_get_all(
+            self.session_id
+        )
+        if limit is not None and limit > 0:
+            return items[-limit:]
+        return items
+
+    @override
+    async def add_items(self, items: list[TResponseInputItem]) -> None:
+        if not items:
+            return
+        await self.cacher.list_push_left_many(self.session_id, items)
+        await self.cacher.expire(self.session_id, self.ttl)
+
+    @override
+    async def pop_item(self) -> TResponseInputItem | None:
+        return await self.cacher.list_pop_right(self.session_id)
+
+    @override
+    async def clear_session(self) -> None:
+        await self.cacher.delete(self.session_id)
 
 ```
 
@@ -2504,6 +3092,7 @@ from core.shared.database.session import (
     AsyncSession,
     AsyncTxSession,
 )
+
 
 
 async def global_headers(
@@ -2925,6 +3514,7 @@ from core.shared.globals import g
 from core.shared.exceptions import ServiceException
 from core.shared.dependencies import global_headers
 from core.shared.middleware import GlobalContextMiddleware, GlobalMonitorMiddleware
+from core.features.dispatch import Dispatch
 
 name = "Agent-Scheduler-System"
 
@@ -2934,7 +3524,10 @@ logger = logging.getLogger(name)
 @asynccontextmanager
 async def lifespan(app: fastapi.FastAPI):
     setup_logging()
+
+    await Dispatch.start()
     yield
+    await Dispatch.shutdown()
 
 
 app = fastapi.FastAPI(
@@ -3032,5 +3625,73 @@ db-generate:
 db-upgrade:
 	@echo "Upgrading DB for [$(ENV)] to head..."
 	@ENV=$(ENV) alembic upgrade head
+
+```
+
+## `/Users/askfiy/project/coding/agent-scheduler-system/session.json`
+
+```json
+[
+  { "content": "你好啊.", "role": "user" },
+  {
+    "id": "msg_6892f33ed1d0819aaca73d045bc30d1108021ad6d1939c58",
+    "content": [
+      {
+        "annotations": [],
+        "text": "你好呀！有什么我可以帮你的吗？",
+        "type": "output_text",
+        "logprobs": []
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  { "content": "我叫 askfiy\\ 你叫什么", "role": "user" },
+  {
+    "id": "msg_6892f3450e80819a8d17e584d35c8a2208021ad6d1939c58",
+    "content": [
+      {
+        "annotations": [],
+        "text": "你好，askfiy！我是你的AI助手，没有名字，不过你可以随意叫我任何你喜欢的名字。有什么我可以帮你的吗？",
+        "type": "output_text",
+        "logprobs": []
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  { "content": "你好.", "role": "user" },
+  {
+    "id": "msg_6892f34a03a0819ab5c1dd2dba6ae14808021ad6d1939c58",
+    "content": [
+      {
+        "annotations": [],
+        "text": "你好！有什么我可以为你做的吗？",
+        "type": "output_text",
+        "logprobs": []
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  },
+  { "content": "好吧,你叫小 a", "role": "user" },
+  {
+    "id": "msg_6892f36391e8819abe90ebbbc9b320b908021ad6d1939c58",
+    "content": [
+      {
+        "annotations": [],
+        "text": "好的，叫我小A就行！有什么需要帮忙的吗？",
+        "type": "output_text",
+        "logprobs": []
+      }
+    ],
+    "role": "assistant",
+    "status": "completed",
+    "type": "message"
+  }
+]
 
 ```

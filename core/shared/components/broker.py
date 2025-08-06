@@ -123,7 +123,6 @@ class RBroker:
             "message": rbroker_message.model_dump_json()
         }
         message_id = await self._client.xadd(topic, message_payload)
-        logging.info(f"Sent message {message_id} to topic '{topic}'")
         return message_id
 
     async def consumer(
@@ -153,7 +152,6 @@ class RBroker:
                 self._consume_worker(topic, group_id, consumer_name, callback)
             )
             self._consumer_tasks.append(task)
-            logging.info(f"Started consumer task '{consumer_name}' on topic '{topic}'.")
 
     async def shutdown(self):
         logging.info("Shutting down consumer tasks...")
