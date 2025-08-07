@@ -1,3 +1,4 @@
+import uuid
 import typing
 
 import sqlalchemy as sa
@@ -39,7 +40,7 @@ class TasksUnit(BaseTableScheme):
         sa.Text, nullable=False, comment="执行单元的目标"
     )
 
-    invocation_id: Mapped[str] = mapped_column(
+    invocation_id: Mapped[uuid.UUID] = mapped_column(
         sa.CHAR(36), index=True, nullable=False, comment="任务的调用 ID"
     )
 

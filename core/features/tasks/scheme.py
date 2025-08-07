@@ -1,3 +1,4 @@
+import uuid
 import datetime
 from typing import Optional
 
@@ -46,8 +47,15 @@ class Tasks(BaseTableScheme):
         server_default=sa.text("0"),
     )
 
-    invocation_id: Mapped[str] = mapped_column(
-        sa.CHAR(36), nullable=True, index=True, comment="任务的调用 ID"
+    trace_id: Mapped[uuid.UUID] = mapped_column(
+        sa.CHAR(36),
+        nullable=False,
+        index=True,
+        comment="任务建立时流转的事务 Id.",
+    )
+
+    invocation_id: Mapped[uuid.UUID] = mapped_column(
+        sa.CHAR(36), nullable=True, index=True, comment="任务的调用批次 Id"
     )
 
     expect_execute_time: Mapped[datetime.datetime] = mapped_column(

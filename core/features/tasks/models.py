@@ -1,3 +1,4 @@
+import uuid
 import datetime
 
 from pydantic import field_serializer
@@ -24,7 +25,7 @@ class TaskInCrudModel(BaseModel):
     chats: list[TaskChatInCrudModel]
     histories: list[TaskHistoryInCrudModel]
 
-    invocation_id: str | None = None
+    invocation_id: uuid.UUID | None = None
     lasted_execute_time: datetime.datetime | None = None
 
     @field_serializer("keywords")
@@ -50,7 +51,7 @@ class TaskUpdateModel(BaseModel):
     name: str | None = None
     state: TaskState | None = None
     priority: int | None = None
-    invocation_id: str | None = None
+    invocation_id: uuid.UUID | None = None
 
     expect_execute_time: datetime.datetime | None = None
     lasted_execute_time: datetime.datetime | None = None

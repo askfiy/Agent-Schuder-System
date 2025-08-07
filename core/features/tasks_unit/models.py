@@ -1,3 +1,4 @@
+import uuid
 import datetime
 
 from core.shared.enums import TaskUnitState
@@ -9,7 +10,7 @@ class TaskUnitInCrudModel(BaseModel):
     name: str
     task_id: int
     objective: str
-    invocation_id: str
+    invocation_id: uuid.UUID
     state: TaskUnitState
     output: str | None = None
     created_at: datetime.datetime
@@ -19,7 +20,7 @@ class TaskUnitCreateModel(BaseModel):
     name: str
     task_id: int
     objective: str
-    invocation_id: str
+    invocation_id: uuid.UUID
 
 
 class TaskUnitUpdateModel(BaseModel):

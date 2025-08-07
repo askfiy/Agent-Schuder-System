@@ -1,4 +1,3 @@
-from ast import match_case
 import logging
 from typing import Any
 from dataclasses import dataclass
@@ -102,11 +101,14 @@ class TaskAgent:
         #  -. UPDATING: 在等待消费过程中, 用户修改了任务的某些信息.
         if self.task.state != TaskState.QUEUING:
             match self.task.state:
-                case TaskState.CANCELLED:
+                case state if state in [TaskState.CANCELLED]:
                     logger.info("任务非正常出队, 已被用户取消. 放弃该任务")
                     return
-
+                case state if state in [TaskState.FAILED, TaskState.FINISHED]:
+                    logger.info("任务非正常出队, 已进入结束态. 放弃该任务")
+                    return
                 case _:
+                    logger.info("任务非正常出队, 状态可恢复. 尝试恢复中...")
                     await self.task.update(
                         TaskInDispatchUpdateModel(
                             state=TaskState.SCHEDULING,
