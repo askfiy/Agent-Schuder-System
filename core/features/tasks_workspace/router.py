@@ -19,7 +19,9 @@ from .models import (
 )
 
 
-controller = fastapi.APIRouter(prefix="/workspaces", tags=["Workspaces"])
+controller = fastapi.APIRouter(
+    prefix="/workspaces", tags=["Workspaces"], deprecated=True
+)
 
 
 @controller.get(

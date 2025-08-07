@@ -11,7 +11,7 @@ from core.shared.database.session import (
     get_async_tx_session_direct,
 )
 from ..tasks.scheme import Tasks
-from . import service
+from . import actions
 from .models import TaskInDispatchModel, TaskInDispatchUpdateModel
 
 logger = logging.getLogger("Dispatch")
@@ -20,7 +20,7 @@ logger = logging.getLogger("Dispatch")
 class TaskProxy(TaskInDispatchModel):
     @classmethod
     async def create(cls, task_id: int) -> "TaskProxy":
-        db_obj = await service.get_task(task_id=task_id)
+        db_obj = await actions.get_task(task_id=task_id)
         return cls.model_validate(db_obj)
 
     def _sync(self, other: Tasks):
@@ -34,7 +34,7 @@ class TaskProxy(TaskInDispatchModel):
             to_state = update_model.state
 
             # 1. 更新任务状态
-            db_obj = await service.update_task_state(
+            db_obj = await actions.update_task_state(
                 task_id=self.id, state=to_state, session=session
             )
 
@@ -45,7 +45,7 @@ class TaskProxy(TaskInDispatchModel):
                 assert update_model.source_context is not None
                 assert update_model.comment is not None
 
-                await service.create_task_audit(
+                await actions.create_task_audit(
                     task_id=self.id,
                     from_state=from_state,
                     to_state=to_state,
@@ -57,7 +57,7 @@ class TaskProxy(TaskInDispatchModel):
 
             # 3. 写历史记录（无论状态是否变化）
             if update_model.process and update_model.thinking:
-                await service.update_task_process(
+                await actions.update_task_process(
                     task_id=self.id,
                     state=to_state,
                     process=update_model.process,
@@ -72,14 +72,14 @@ class TaskProxy(TaskInDispatchModel):
 @dataclass
 class TaskAgent:
     agent: Agent
-    task: TaskProxy
+    task: TaskProxy | None
 
     @classmethod
     def create(
         cls,
         *,
         name: str,
-        bind_task: TaskProxy,
+        bind_task: TaskProxy | None = None,
         instructions: str | None,
         model: Model | None = None,
         session: RSession | None = None,
@@ -90,15 +90,20 @@ class TaskAgent:
         )
         return cls(agent=agent_instance, task=bind_task)
 
-    async def before_execute(self):
+    async def create_task(
+        self, owner: str, original_user_input: str, owner_timezone: str
+    ):
         pass
 
     async def execute(self):
+        assert self.task, "TaskAgent 未绑定任务. 因此无法执行."
+
         logger.info(f"消费任务: {self.task.model_dump_json(indent=2)}")
 
         # 可能得情况:
         #  -. CANCELLED: 在等待消费过程中, 被用户取消了
         #  -. UPDATING: 在等待消费过程中, 用户修改了任务的某些信息.
+
         if self.task.state != TaskState.QUEUING:
             match self.task.state:
                 case state if state in [TaskState.CANCELLED]:

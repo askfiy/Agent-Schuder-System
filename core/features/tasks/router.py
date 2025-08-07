@@ -22,7 +22,7 @@ from .models import (
 )
 
 
-controller = fastapi.APIRouter(prefix="/tasks", tags=["tasks"])
+controller = fastapi.APIRouter(prefix="/tasks", tags=["tasks"], deprecated=True)
 
 
 @controller.get(

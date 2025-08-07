@@ -18,7 +18,11 @@ from . import service
 from .models import TaskUnitInCrudModel, TaskUnitCreateModel, TaskUnitUpdateModel
 
 
-controller = fastapi.APIRouter(prefix="/units", tags=["Units"])
+controller = fastapi.APIRouter(
+    prefix="/units",
+    tags=["Units"],
+    deprecated=True,
+)
 
 
 @controller.get(
@@ -68,5 +72,3 @@ async def update(
         unit_id=unit_id, update_model=update_model, session=session
     )
     return ResponseModel(result=TaskUnitInCrudModel.model_validate(db_obj))
-
-

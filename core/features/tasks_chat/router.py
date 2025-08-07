@@ -21,7 +21,10 @@ from .models import (
 )
 
 
-controller = fastapi.APIRouter(prefix="/chats", tags=["chats"])
+controller = fastapi.APIRouter(
+    prefix="/chats",
+    tags=["chats"],
+)
 
 
 @controller.get(
