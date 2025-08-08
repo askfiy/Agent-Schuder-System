@@ -1,6 +1,8 @@
+import uuid
 import datetime
 from collections.abc import Sequence
 
+from core.shared.base.model import BaseModel
 from core.shared.enums import TaskState, TaskAuditSource
 from core.shared.database.session import (
     get_async_session_direct,
@@ -34,15 +36,7 @@ async def get_task(task_id: int) -> Tasks:
         return await tasks_service.get(task_id, session=session)
 
 
-async def get_dispatch_tasks_id() -> Sequence[int]:
-    """
-    获取调度任务
-    """
-    async with get_async_tx_session_direct() as session:
-        return await tasks_service.get_dispatch_tasks_id(session=session)
-
-
-async def create_task(
+async def create_dispatch_task(
     prd: str,
     name: str,
     expect_execute_time: datetime.datetime,
@@ -50,6 +44,7 @@ async def create_task(
     owner_timezone: str,
     keywords: list[str],
     original_user_input: str,
+    trace_id: uuid.UUID,
 ) -> Tasks:
     """
     创建任务
@@ -72,6 +67,7 @@ async def create_task(
                 owner_timezone=owner_timezone,
                 keywords=keywords,
                 original_user_input=original_user_input,
+                trace_id=trace_id,
             ),
             session=session,
         )
@@ -115,7 +111,7 @@ async def create_task_audit(
 
 
 async def update_task_process(
-    task_id: int, state: TaskState, process: str, thinking: str, session: AsyncSession
+    task_id: int, state: TaskState, process: str, thinking: str, session: AsyncTxSession
 ) -> TasksHistory:
     return await tasks_history_service.create(
         create_model=TaskHistoryCreateModel(
@@ -123,3 +119,19 @@ async def update_task_process(
         ),
         session=session,
     )
+
+
+async def update_fields(
+    task_id: int, update_model: TaskUpdateModel, session: AsyncTxSession
+) -> Tasks:
+    return await tasks_service.update(
+        task_id=task_id, update_model=update_model, session=session
+    )
+
+
+async def get_task_workspace(workspace_id: int) -> TasksWorkspace:
+    async with get_async_session_direct() as session:
+        return await tasks_workspace_service.get(
+            workspace_id=workspace_id, session=session
+        )
+

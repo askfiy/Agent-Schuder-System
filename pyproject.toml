@@ -13,6 +13,7 @@ dependencies = [
     "openai-agents>=0.2.4",
     "pydantic-settings>=2.10.1",
     "pymysql>=1.1.1",
+    "pytz>=2025.2",
     "redis[hiredis]>=6.2.0",
     "socksio>=1.0.0",
     "sqlalchemy>=2.0.42",

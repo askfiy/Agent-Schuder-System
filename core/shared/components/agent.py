@@ -14,7 +14,7 @@ from agents.items import TResponseInputItem
 from agents.result import RunResult, RunResultStreaming
 from agents.util._types import MaybeAwaitable
 
-from core.shared.base.model import BaseLLMModel
+from core.shared.base.model import LLMInputModel, LLMOutputModel
 from .session import RSession
 
 
@@ -37,7 +37,7 @@ class Agent:
             ]
             | None
         ) = None,
-        model: Model | None = None,
+        model: Model | None | str = None,
         session: RSession | None = None,
         **kwargs: Any,
     ):
@@ -50,7 +50,6 @@ class Agent:
             name=self.name,
             instructions=self.instructions,
             model=self.model,
-            model_settings=ModelSettings(include_usage=True),
             **kwargs,
         )
 
@@ -58,7 +57,7 @@ class Agent:
         self,
         input: str | list[TResponseInputItem],
         session: RSession | None = None,
-        output_type: type[BaseLLMModel] | AgentOutputSchemaBase | None = None,
+        output_type: type[LLMInputModel] | AgentOutputSchemaBase | None = None,
         **kwargs: Any,
     ) -> RunResultStreaming:
         agent = self.agent.clone(output_type=output_type, **kwargs)
@@ -68,7 +67,7 @@ class Agent:
         self,
         input: str | list[TResponseInputItem],
         session: RSession | None = None,
-        output_type: type[BaseLLMModel] | AgentOutputSchemaBase | None = None,
+        output_type: type[LLMOutputModel] | AgentOutputSchemaBase | None = None,
         **kwargs: Any,
     ) -> RunResult:
         agent = self.agent.clone(output_type=output_type, **kwargs)

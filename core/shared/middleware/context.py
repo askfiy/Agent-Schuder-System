@@ -39,8 +39,6 @@ class GlobalContextMiddleware:
         self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        g.clear()
-
         ctx = copy_context()
         await ctx.run(self.app, scope, receive, send)
 

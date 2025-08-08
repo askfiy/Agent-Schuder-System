@@ -48,3 +48,15 @@ class TaskAuditSource(StrEnum):
     ADMIN = "admin"
     AGENT = "agent"
     SYSTEM = "system"
+
+
+class TaskExecuteSource(StrEnum):
+    """
+    触发任务执行的来源
+    """
+    # unit 触发
+    UNIT = "unit-call"
+    # 用户触发
+    USER = "user-call"
+    # 调度触发
+    DISPATCH = "dispatch-call"

@@ -13,6 +13,7 @@ from ..tasks_history.models import TaskHistoryInCrudModel
 class TaskInCrudModel(BaseModel):
     id: int
     name: str
+    trace_id: uuid.UUID
     state: TaskState
     priority: int
     workspace_id: int
@@ -41,6 +42,7 @@ class TaskCreateModel(BaseModel):
     owner_timezone: str
     keywords: list[str]
     original_user_input: str
+    trace_id: uuid.UUID
 
     @field_serializer("keywords")
     def _validator_keywords(self, keywords: list[str]) -> str:
